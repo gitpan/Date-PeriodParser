@@ -1,5 +1,9 @@
 Revision history for Perl extension Date::PeriodParser.
 
+0.02  Sat Jun  1 10:14:50 BST 2002
+    - Fix dependencies.
+    - Fix test harness.
+
 0.01  Fri Apr 12 21:44:22 2002
 	- original version; created by h2xs 1.21 with options
 		-AX -n Date::PeriodParser
