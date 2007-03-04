@@ -1,14 +1,21 @@
 package Date::PeriodParser;
 
-use Lingua::EN::Words2Nums;
 use 5.006;
 use strict;
 use warnings;
 use Time::Local;
-use Date::Calc;
+use Date::Calc qw(
+    Add_Delta_Days
+	Add_Delta_YM
+    Date_to_Time
+    Day_of_Week
+    Days_in_Month
+    Decode_Month
+);
 
 use constant GIBBERISH => -1;
 use constant AMBIGUOUS => -2;
+use constant DEPENDENCY => -3;
 
 # Boring administrative details
 require Exporter;
@@ -16,11 +23,12 @@ our @ISA = qw(Exporter);
 our %EXPORT_TAGS = ( 'all' => [ qw( parse_period	) ] );
 our @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
 our @EXPORT = qw( parse_period);
-our $VERSION = '0.04';
+our $VERSION = '0.05';
 
 $Date::PeriodParser::DEBUG = 0;
 
-our $TestTime; # This is set by test.pl so we don't have to be dynamic
+our $TestTime; # This is set by our tests so we don't have to dynamically figure out
+               # acceptable ranges for our test results
 
 my $roughly = qr/((?:a?round(?: about)?|about|roughly|circa|sometime)\s*)+/;
 
@@ -30,7 +38,7 @@ sub _debug {
     print STDERR "# @_\n" if $Date::PeriodParser::DEBUG;
 }
 
-# The actual parsing routine. Detained below in the pod.
+# The actual parsing routine. Detailed below in the pod.
 
 sub parse_period {
     local $_ = lc shift; # Since we're doing lots of regexps on it.
@@ -51,7 +59,7 @@ sub parse_period {
     _debug("this is a vague time");
     
     # Stupid cases first.
-    # "now": precisely now, or +/- 5 minutes if vague
+    # "now": precisely now, or +/- 5 minutes if vague (e.g. "about now")
     return _apply_leeway($now, $now, 300 * $vague) 
         if /^now$/;
 
@@ -60,12 +68,66 @@ sub parse_period {
         return ($from, $to);
     }
 
+    # "this week", "last week", "next week"
+    if ( m/(this|last|next) week/ ) {
+        my $modifier = $1;
+        my @today = _today();
+        if ( $modifier eq 'last' ) {
+            @today = Add_Delta_Days( @today, -7 );
+        }
+		elsif ( $modifier eq 'next' ) {
+			@today = Add_Delta_Days( @today, +7 );
+		}
+        my $today = Day_of_Week(@today);
+        my $monday = 1;
+        my $sunday = 7;
+
+        # Monday at midnight and sunday just before midnight
+        my @monday = ( Add_Delta_Days(@today, $monday - $today),  0,  0,  0 );
+        my @sunday = ( Add_Delta_Days(@today, $sunday - $today), 23, 59, 59 );
+        
+        return ( _timelocal(@monday), _timelocal(@sunday) );
+    }
+
+    # "this month", "last month", "next month"
+    if (m/(this|last|next) month/) {
+        my $modifier = $1;
+        my ( $year, $month, $day ) = _today();
+
+        # find a day in the previous month
+        if ( $modifier eq 'last' ) {
+            ( $year, $month ) = Add_Delta_YM( $year, $month, $day, 0, -1 );
+        }
+		elsif ( $modifier eq 'next' ) {
+			($year, $month ) = Add_Delta_YM( $year, $month, $day, 0, 1 );
+		}
+
+        my @first = ( $year, $month, 1, 0, 0, 0 );    # first day at midnight
+        my $last_day_of_month = Days_in_Month( $year, $month );
+        my @last = ( $year, $month, $last_day_of_month , 23, 59, 59 );
+
+        return ( _timelocal(@first), _timelocal(@last) );
+    }
+
+    # "january 2007", "dec 1991", etc
+    if (m{\A (\w+) \s+ (\d{4}) \z}xms) {
+        my $month = $1;
+        my $year  = $2;
+
+        if ( $month = Decode_Month($month) ) {
+            my @first = ( $year, $month, 1, 0, 0, 0 );   # first day at midnight
+            my $last_day_of_month = Days_in_Month( $year, $month );
+            my @last = ( $year, $month, $last_day_of_month, 23, 59, 59 );
+            return ( _timelocal(@first), _timelocal(@last) );
+        }
+    }
+
     # Recent times
     if (/(the day (before|after) )?(yesterday|today|tomorrow)/ ||
-	/^this (morning|afternoon|evening|lunchtime)/   ||
-	/^at lunchtime$/ ||
-	/^(in the) (morning|afternoon|evening)/ ||
-	/^(last |to)night/) {
+  	    /^this (morning|afternoon|evening|lunchtime)/   ||
+	    /^at lunchtime$/ ||
+	    /^(in the) (morning|afternoon|evening)/ ||
+	    /^(last |to)night/) {
 
         if (s/the day (before|after)//) {
             my $wind = $1 eq "before" ? -1 : 1;
@@ -74,13 +136,17 @@ sub parse_period {
         }
         if (/yesterday/)   { $day--; _debug("Back 1 day") }
         elsif (/tomorrow/) { $day++; _debug("Forward 1 day") }
-	# if it's later than the morning and the phrase is "in the morning", add a day.
-	if ($h>12 and /in the morning$/) {$day++}
-	# if it's later than the afternoon and the phrase is "in the afternoon",
-	# add a day.
-	elsif ($h>18 and /in the afternoon$/) {$day++}
-	# if it's nighttime, and the phrase is "in the evening", add a day.
-	elsif (($h>21 or $h<6) and /in the evening$/) {$day++}
+
+    	# if it's later than the morning and the phrase is "in the morning", add a day.
+	    if ($h>12 and /in the morning$/) {$day++}
+	
+	    # if it's later than the afternoon and the phrase is "in the afternoon",
+	    # add a day.
+	    elsif ($h>18 and /in the afternoon$/) {$day++}
+	
+	    # if it's nighttime, and the phrase is "in the evening", add a day.
+	    elsif (($h>21 or $h<6) and /in the evening$/) {$day++}
+	
         $day-- if /last/;
         ($from, $to, $leeway) = _period_or_all_day($day, $mon, $year, $now);
         return _apply_leeway($from, $to, $leeway * $vague);
@@ -92,17 +158,19 @@ sub parse_period {
     if (/^(.*) day(?:s)? ago$/ || /^in (.*) day(?:s)?(?: time)$/ || 
         /^(.*) days (?:away)?\s*(?:from now)?$/) {
         my $days = $1;
-	{
-	  local $_; 
+	    {
+	      local $_; 
           # words2nums() trashes $_.
-	  $days = words2nums($days);
-	}
-        if (defined $days) { 
+          eval { require Lingua::EN::Words2Nums }
+             or return (DEPENDENCY, "Lingua::EN::Words2Nums not installed");
+	  		$days = Lingua::EN::Words2Nums::words2nums($days);
+		}
+    	if (defined $days) { 
             $days *= -1 if /ago/;
             _debug("Modifying day by $days");
             $day += $days;
             ($from, $to, $leeway) = 
-	      _period_or_all_day($day, $mon, $year, $now);
+	      		_period_or_all_day($day, $mon, $year, $now);
             return _apply_leeway($from, $to, $leeway * $vague);
         }
      }
@@ -202,6 +270,29 @@ sub _apply_leeway {
     $from -= $leeway; $to += $leeway;
     return ($from, $to);
 }
+
+# similar to Time::Local::timelocal but accepts the offsets returned by
+# Date::Calc::Today_and_Now()
+sub _timelocal {
+    my ( $year, $mon, $day, $hour, $min, $sec ) = @_;
+
+    # make offsets as expected by timelocal
+    $year -= 1900;
+    $mon--;
+
+    return timelocal( $sec, $min, $hour, $day, $mon, $year );
+}
+
+# same as Date::Calc::Today but respect $TestTime so that
+# we can test periods based on today's date
+sub _today {
+    my $now = $TestTime || time;
+    my ( $day, $month, $year ) = ( localtime $now )[ 3 .. 5 ];
+    $year += 1900;
+    $month++;
+    return ($year, $month, $day);
+}
+
 1;
 __END__
 
@@ -260,6 +351,16 @@ relative times specified with "in the" (for morning, afternoon, and evening)
 disambiguate relative to the current time. For instance, if it's afternoon
 and "in the morning" is specified, this implies "tomorrow morning".
 
+=item * this week, last week, this month, last month
+
+"This" means the week or month which includes the current day.  Weeks begin on
+Monday and end of Sunday.  "Last" means the week or month preceeding "this
+week/month".
+
+=item * january 2007, dec 2005, jul 1982
+
+A month name followed by a four-digit year.
+
 =item * "ago" and "from now"
 
 Offsets in days and "a week" are accepted; you cannot cross a month
@@ -277,8 +378,21 @@ explanation instead of two epoch time values. Error code -1 means "You
 entered gibberish", error code -2 means "you entered something
 ambiguous", and the explanation will tell you how to disambiguate it.
 
-=cut
+=head1 DEPENDENCIES
 
+=over 
+
+=item * Lingua::EN::Words2Nums
+
+Any of the phrases that use an English word for a number require that
+L<Lingua::EN::Words2Nums> be installed.  If those phrases are not used,
+the module is optional.
+
+=item * Date::Calc
+
+Used to do all that messy date math.
+
+=back
 
 =head1 BUGS
 
@@ -304,10 +418,11 @@ and will be addressed in the next release.
 
 Simon Cozens, C<simon@cpan.org>
 Joe McMahon, C<mcmahon@cpan.org>
+Major contributions by Michael Hendrix (mndrix@cpan.org) (Thanks!)
 
 =head1 LEGAL
 
-Copyright (C) 2002 by Simon Cozens; Copyright (c) 2005 by Joe McMahon
+Copyright (C) 2002 by Simon Cozens; Copyright (c) 2005-2007 by Joe McMahon
 
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself, either Perl version 5.8.5 or,
