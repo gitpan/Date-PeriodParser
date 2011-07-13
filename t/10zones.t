@@ -129,8 +129,8 @@ else {
         my($from, $to);
         foreach $interval (keys %tests) {
           ($from, $to) = parse_period($interval);
-          is(sl($from), $tests{$interval}->[0], "'$interval' start");
-          is(sl($to),   $tests{$interval}->[1], "'$interval' end");
+          is(sl($from), $tests{$interval}->[0], "'$interval' $zone start");
+          is(sl($to),   $tests{$interval}->[1], "'$interval' $zone end");
         }
     }
 }
