@@ -2,6 +2,7 @@ use Test::More tests=>8;
 use Time::Local;
 use Date::PeriodParser;
 use POSIX qw( strftime );
+use vars qw( $Date::PeriodParser::TestTime );
 {
     # Set the base time we use for tests (Fri Apr 12 22:01:36 2002)
     $Date::PeriodParser::TestTime = $base =

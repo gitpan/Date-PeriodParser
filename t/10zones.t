@@ -2,6 +2,7 @@ use Test::More;
 use Time::Local;
 use Date::PeriodParser;
 use POSIX qw( strftime tzset );
+use vars qw( $Date::PeriodParser::TestTime );
 
 sub slt { scalar localtime timelocal @_ }
 sub sl { scalar localtime shift }
@@ -111,26 +112,19 @@ my @zones = qw(
 			      # Wed Apr  3 11:59:59 2002
 );
 
-eval { $ENV{TZ} = 'PDT'; tzset };
-if ($@ =~ /tzset not implemented/) {
-    plan skip_all => 'tzset not supported';
-}
-else {
-    plan tests => 2 * (scalar @zones);
-    foreach my $zone (@zones) {
-        $ENV{TZ} = $zone;
-        tzset;
-        # Set the base time we use for tests (Fri Apr 12 22:01:36 2002)
-        # We must do this inside the loop, because we need it done relative to
-        # what we just set the timezone to.
-        $Date::PeriodParser::TestTime = $base = 
-            timelocal( qw(36 1 22 12 3 102 ) );
-        my ($s, $mn, $h, $d, $m, $y, $wd, $yd, $dst) = localtime($base);
-        my($from, $to);
-        foreach $interval (keys %tests) {
-          ($from, $to) = parse_period($interval);
-          is(sl($from), $tests{$interval}->[0], "'$interval' $zone start");
-          is(sl($to),   $tests{$interval}->[1], "'$interval' $zone end");
-        }
+plan tests => 2 * (scalar @zones);
+foreach my $zone (@zones) {
+    $ENV{TZ} = $zone;
+    tzset;
+    # Set the base time we use for tests (Fri Apr 12 22:01:36 2002)
+    # We must do this inside the loop, because we need it done relative to
+    # what we just set the timezone to.
+    $Date::PeriodParser::TestTime = $base = timelocal( qw(36 1 22 12 3 102 ) );
+    my ($s, $mn, $h, $d, $m, $y, $wd, $yd, $dst) = localtime($base);
+    my($from, $to);
+    foreach $interval (keys %tests) {
+      ($from, $to) = parse_period($interval);
+      is(sl($from), $tests{$interval}->[0], "'$interval' start");
+      is(sl($to),   $tests{$interval}->[1], "'$interval' end");
     }
 }

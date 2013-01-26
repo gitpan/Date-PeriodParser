@@ -20,3 +20,4 @@ t/pod-coverage.t
 t/pod.t
 t/this-month.t
 t/this-week.t
+META.json                                Module JSON meta-data (added by MakeMaker)
